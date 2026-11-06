@@ -80,6 +80,50 @@
       ],
       "corretta": "A",
       "spiegazione": "I token del prompt vengono mascherati: il modello deve imparare a generare la risposta, non a riprodurre l'istruzione."
+    },
+    {
+      "tipo": "abbinamento",
+      "domanda": "Collega ogni metodo di post-training alla sua idea",
+      "coppie": [
+        [
+          "SFT",
+          "Imitare risposte di esempio scritte da umani"
+        ],
+        [
+          "RLHF",
+          "Reward model addestrato su preferenze + ottimizzazione con PPO"
+        ],
+        [
+          "DPO",
+          "Ottimizza direttamente sulle coppie di preferenze, senza reward model"
+        ],
+        [
+          "LoRA",
+          "Aggiorna i pesi solo tramite matrici a basso rango"
+        ]
+      ],
+      "spiegazione": "SFT, RLHF e DPO sono obiettivi di allineamento; LoRA è una tecnica di fine-tuning efficiente che si può usare con ciascuno di essi."
+    },
+    {
+      "tipo": "ordina",
+      "domanda": "Metti in ordine la pipeline classica di RLHF (stile InstructGPT)",
+      "passi": [
+        "Pre-training del modello linguistico",
+        "Supervised fine-tuning (SFT) su dimostrazioni",
+        "Raccolta di confronti umani tra risposte",
+        "Addestramento del reward model",
+        "Ottimizzazione della policy con PPO e penalità KL"
+      ]
+    },
+    {
+      "tipo": "aperta",
+      "domanda": "Perché LoRA non introduce latenza aggiuntiva in inferenza?",
+      "risposta": "Perché $BA$ ha la stessa forma di $W$ ($d\\times k$): finito il training si calcola $W' = W + \\frac{\\alpha}{r}BA$ e si usa un'unica matrice, come nel modello originale.",
+      "punti": [
+        "$BA$ ha forma $d\\times k$",
+        "merge $W' = W + BA$ dopo il training",
+        "nessun layer extra a runtime"
+      ]
     }
   ]
 }
