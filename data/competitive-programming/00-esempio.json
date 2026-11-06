@@ -1,0 +1,34 @@
+{
+  "materia": "Competitive Programming",
+  "lezione": "00 - Esempio: ricerca binaria",
+  "domande": [
+    {
+      "tipo": "errore",
+      "domanda": "Questo `lower_bound` (intervallo semiaperto $[lo, hi)$) ha un bug. Tocca la riga sbagliata.",
+      "testo": "fn lower_bound(v: &[i32], x: i32) -> usize {\n    let (mut lo, mut hi) = (0, v.len());\n    while lo < hi {\n        let mid = lo + (hi - lo) / 2;\n        if v[mid] < x {\n            lo = mid + 1;\n        } else {\n            {{hi = mid - 1;|hi = mid;}}\n        }\n    }\n    lo\n}",
+      "spiegazione": "Con l'intervallo semiaperto, quando `v[mid] >= x` `mid` può essere la risposta: va tenuto, quindi `hi = mid`. Con `mid - 1` si salta la risposta e si va in underflow se `mid == 0`."
+    },
+    {
+      "tipo": "multipla",
+      "domanda": "Che complessità ha questa funzione su uno slice ordinato di $n$ elementi?",
+      "codice": "fn contains(v: &[i32], x: i32) -> bool {\n    v.binary_search(&x).is_ok()\n}",
+      "opzioni": [
+        "$O(\\log n)$",
+        "$O(n)$",
+        "$O(n \\log n)$",
+        "$O(1)$"
+      ],
+      "corretta": "A",
+      "mescola": false
+    },
+    {
+      "tipo": "vero_falso",
+      "affermazione": "Su un array già ordinato, la tecnica two pointers trova una coppia con somma $x$ in tempo $O(n)$.",
+      "risposta": true
+    },
+    {
+      "tipo": "completamento",
+      "testo": "La ricerca binaria richiede che il predicato sia [[monotono|monotòno]] sull'intervallo di ricerca."
+    }
+  ]
+}

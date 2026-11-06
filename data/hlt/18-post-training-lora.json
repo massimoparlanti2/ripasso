@@ -1,0 +1,85 @@
+{
+  "materia": "Human Language Technologies",
+  "lezione": "18 - Post-training e LoRA",
+  "domande": [
+    {
+      "tipo": "multipla",
+      "domanda": "Come viene parametrizzato l'aggiornamento dei pesi $\\Delta W$ in LoRA?",
+      "opzioni": [
+        "$\\Delta W = BA$ con $B \\in \\mathbb{R}^{d\\times r}$, $A \\in \\mathbb{R}^{r\\times k}$ e $r \\ll \\min(d,k)$",
+        "$\\Delta W = W \\odot M$ con $M$ maschera binaria sparsa",
+        "$\\Delta W$ è una matrice piena aggiornata solo ogni $r$ step",
+        "$\\Delta W = U\\Sigma V^\\top$ ottenuta dalla SVD di $W$"
+      ],
+      "corretta": "A",
+      "spiegazione": "LoRA vincola l'aggiornamento ad avere rango basso $r$: si addestrano solo $A$ e $B$."
+    },
+    {
+      "tipo": "multipla",
+      "domanda": "Quali affermazioni su LoRA sono vere?",
+      "opzioni": [
+        "I pesi pre-addestrati restano congelati",
+        "Dopo il training $BA$ si può sommare a $W$, senza latenza aggiuntiva in inferenza",
+        "Serve memorizzare i gradienti di tutti i parametri del modello",
+        "$B$ è inizializzata a zero, quindi all'inizio $\\Delta W = 0$"
+      ],
+      "corretta": [
+        "A",
+        "B",
+        "D"
+      ],
+      "spiegazione": "I gradienti (e gli stati dell'ottimizzatore) servono solo per $A$ e $B$."
+    },
+    {
+      "tipo": "vero_falso",
+      "affermazione": "In DPO si addestra prima un reward model esplicito e poi si ottimizza la policy con PPO.",
+      "risposta": false,
+      "spiegazione": "Quella è la pipeline RLHF. DPO ottimizza direttamente la policy sulle coppie di preferenze, senza reward model esplicito né RL."
+    },
+    {
+      "tipo": "vero_falso",
+      "affermazione": "LoRA riduce la memoria per gli stati dell'ottimizzatore (es. i momenti di Adam), perché si addestrano solo $A$ e $B$.",
+      "risposta": true
+    },
+    {
+      "tipo": "completamento",
+      "testo": "Con $d = k = 4096$ e rango $r = 8$, LoRA addestra $r(d+k) =$ [[65536|65.536|65,536]] parametri per matrice, invece di circa 16,8 milioni.",
+      "spiegazione": "$8 \\cdot (4096+4096) = 65\\,536$, cioè circa lo 0,4% di $4096^2$."
+    },
+    {
+      "tipo": "completamento",
+      "testo": "In RLHF il reward model è addestrato su coppie di risposte etichettate con [[preferenze umane|preferenze]]; la policy è poi ottimizzata con [[PPO]] aggiungendo una penalità [[KL]] rispetto al modello di riferimento.",
+      "distrattori": [
+        "SGD",
+        "entropia",
+        "etichette di classe",
+        "MSE"
+      ]
+    },
+    {
+      "tipo": "completamento",
+      "testo": "La [[DPO|Direct Preference Optimization]] ottimizza la policy direttamente sulle coppie di preferenze, senza reward model esplicito."
+    },
+    {
+      "tipo": "errore",
+      "testo": "Nella formulazione originale di LoRA, la matrice $A$ viene inizializzata a {{zero|valori gaussiani casuali}}, mentre $B$ viene inizializzata a zero.",
+      "spiegazione": "Se fossero entrambe zero il gradiente sarebbe nullo. Con $B=0$ si ha $\\Delta W = 0$ all'inizio, ma il training può partire."
+    },
+    {
+      "tipo": "errore",
+      "testo": "In QLoRA il modello base viene quantizzato a {{8|4}} bit con il formato NormalFloat (NF4), mentre gli adapter LoRA vengono addestrati in precisione maggiore."
+    },
+    {
+      "tipo": "multipla",
+      "domanda": "Nel fine-tuning supervisionato (SFT) su coppie istruzione–risposta, su quali token si calcola di solito la loss?",
+      "opzioni": [
+        "Solo sui token della risposta",
+        "Solo sui token del prompt",
+        "Su tutti i token, pesando di più il prompt",
+        "Solo sull'ultimo token"
+      ],
+      "corretta": "A",
+      "spiegazione": "I token del prompt vengono mascherati: il modello deve imparare a generare la risposta, non a riprodurre l'istruzione."
+    }
+  ]
+}
