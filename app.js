@@ -73,8 +73,13 @@ const L = k => String.fromCharCode(65 + k);
 const mmss = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const fmtDate = (t, o = { day: 'numeric', month: 'short' }) => new Date(t).toLocaleDateString('it-IT', o);
 function toast(msg, ms = 2400) {
-  const t = $('#toast'); t.innerHTML = msg; t.classList.add('on');
+  const t = $('#toast'); t.innerHTML = msg; t.classList.remove('act'); t.classList.add('on');
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), ms);
+}
+function toastAction(msg, label, fn, ms = 6000) {
+  const t = $('#toast'); t.innerHTML = `<span>${msg}</span><button class="toast-btn">${label}</button>`; t.classList.add('on', 'act');
+  $('.toast-btn', t).onclick = () => { t.classList.remove('on', 'act'); fn(); };
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on', 'act'), ms);
 }
 function vibrate(p) { if (PREFS.vib && navigator.vibrate) try { navigator.vibrate(p); } catch { } }
 function go(h) { if (location.hash === h) route(); else location.hash = h; }
@@ -104,7 +109,8 @@ function normalizeState() {
     }
     me.xp = Math.max(me.xp || 0, xp);
   }
-  META.subj ||= {}; META.flags ||= {}; META.goal ||= 20; META.goalT ||= 0;
+  META.subj ||= {}; META.flags ||= {}; META.hidden ||= {}; META.goal ||= 20; META.goalT ||= 0;
+  META.prompt = Object.assign({ min: 15, max: 25, types: Object.keys(TYPES), extra: '', tpl: '', t: 0 }, META.prompt || {});
 }
 normalizeState();
 const ME = () => (STATS.dev[DEVICE] ||= { xp: 0, days: {} });
@@ -275,13 +281,35 @@ function addLesson(l, source) {
   if (!le) { le = { id: lid, sid, nome: l.lezione, ordine: l.ordine, sources: new Set(), domande: [] }; s.lessons.set(lid, le); }
   le.sources.add(source);
   const ids = new Set(le.domande.map(q => q.id));
-  for (const q of l.domande) if (!ids.has(q.id)) { le.domande.push({ ...q, sid, lid }); ids.add(q.id); }
+  for (const q of l.domande) {
+    if (ids.has(q.id)) continue; ids.add(q.id);
+    const full = { ...q, sid, lid };
+    if (isHidden(q.id)) { if (!HIDDEN.some(h => h.id === q.id)) HIDDEN.push(full); le.hiddenN = (le.hiddenN || 0) + 1; }
+    else le.domande.push(full);
+  }
 }
+const isHidden = id => !!META.hidden[id]?.on;
+let HIDDEN = [];
 function rebuild() {
-  DB = new Map();
+  DB = new Map(); HIDDEN = [];
   REPO.forEach(l => addLesson(l, 'repo'));
   LOCAL.forEach(l => addLesson(l, 'local'));
+  // materie e lezioni rimaste vuote (tutte le domande eliminate) spariscono dalla vista; i nomi restano per il ripristino
+  NAMES = new Map();
+  for (const s of DB.values()) for (const l of s.lessons.values()) NAMES.set(s.id + '/' + l.id, { s: s.nome, l: l.nome });
+  for (const s of DB.values()) { for (const [k, l] of s.lessons) if (!l.domande.length) s.lessons.delete(k); if (!s.lessons.size) DB.delete(s.id); }
 }
+let NAMES = new Map();
+function hideQuestions(ids, undo = true) {
+  ids.forEach(id => META.hidden[id] = { on: true, t: Date.now() });
+  saveMeta(); rebuild(); scheduleSync();
+  if (undo) toastAction(`🗑 ${ids.length === 1 ? 'Domanda eliminata' : ids.length + ' domande eliminate'}`, 'Annulla', () => { restoreQuestions(ids); toast('Ripristinate'); });
+}
+function restoreQuestions(ids) {
+  ids.forEach(id => META.hidden[id] = { on: false, t: Date.now() });
+  saveMeta(); rebuild(); scheduleSync(); route();
+}
+const delBtn = q => `<button class="tool del" data-delq="${esc(q.id)}" aria-label="Elimina" title="Elimina domanda">🗑</button>`;
 async function loadRepo() {
   LOAD_ERRORS = []; REPO = [];
   let idx;
@@ -470,6 +498,19 @@ function flagDialog(id, done) {
 app.addEventListener('click', e => {
   const s = e.target.closest('[data-star]');
   if (s) { const id = s.dataset.star; setFlag(id, { star: !isStar(id) }); $$(`[data-star="${CSS.escape(id)}"]`).forEach(b => b.classList.toggle('on', isStar(id))); if (isStar(id)) toast('★ Aggiunta ai preferiti'); return; }
+  const dq = e.target.closest('[data-delq]');
+  if (dq) {
+    const id = dq.dataset.delq;
+    if (!confirm('Eliminare questa domanda? Sparirà da quiz e statistiche su tutti i dispositivi. Potrai ripristinarla da Impostazioni → Domande eliminate.')) return;
+    if (location.hash === '#/quiz' && QUIZ) {
+      const at = QUIZ.items.findIndex(i => i.q.id === id);
+      hideQuestions([id]);
+      if (at >= 0) { QUIZ.items.splice(at, 1); if (at < QUIZ.i) QUIZ.i--; }
+      if (!QUIZ.items.length) { const r = QUIZ.ret; clearQuiz(); go(r); return; }
+      saveQuiz(); quizView(); return;
+    }
+    hideQuestions([id]); route(); return;
+  }
   const f = e.target.closest('[data-flag]');
   if (f) { const id = f.dataset.flag; flagDialog(id, () => $$(`[data-flag="${CSS.escape(id)}"]`).forEach(b => b.classList.toggle('on', isFlag(id)))); }
 });
@@ -560,6 +601,8 @@ function route() {
   if (a === 'importa') return importView();
   if (a === 'formato') return formatView();
   if (a === 'dati') return dataView();
+  if (a === 'eliminate') return hiddenView();
+  if (a === 'prompt') return promptView();
   home();
 }
 function notFound() { view('Non trovato', '#/', `<div class="empty">Questa pagina non esiste più.<br><a class="btn" href="#/">Torna alla home</a></div>`); }
@@ -651,7 +694,8 @@ function subjectView(sid) {
     ${tile('', '📊', 'Statistiche', null, '', `#/stats/${enc(sid)}`)}
     ${tile('', '★', 'Preferiti', stars, '', `#/m/${enc(sid)}/sfoglia/preferiti`)}
     ${tile('', '⚑', 'Segnalate', flags, '', `#/m/${enc(sid)}/sfoglia/segnalate`)}
-  </div>`;
+  </div>
+  <button class="card linkrow" id="t-prompt" style="margin-top:10px"><span>🤖 Copia il prompt per una nuova lezione di ${esc(s.nome)}</span><span>›</span></button>`;
   h += `<h3>Lezioni</h3><div class="list">` + sortedLessons(s).map(l => {
     const a = aggr(l.domande);
     return `<a class="card" href="#/m/${enc(sid)}/l/${enc(l.id)}"><div class="lrow"><div class="grow">
@@ -665,6 +709,7 @@ function subjectView(sid) {
   $('#t-due').onclick = () => startQuiz({ pool: qs.filter(isDue), order: 'random', title: 'Ripasso · ' + s.nome, ret, mode: 'ripasso' });
   $('#t-new').onclick = () => startQuiz({ pool: qs.filter(q => !STATS.q[q.id]), n: PREFS.n || 10, order: 'seq', title: 'Nuove · ' + s.nome, ret });
   $('#t-err').onclick = () => startQuiz({ pool: qs.filter(needsReview), order: 'random', title: 'Errori · ' + s.nome, ret });
+  $('#t-prompt').onclick = () => copyText(buildPrompt(s.nome), `Prompt copiato (${META.prompt.min}-${META.prompt.max} domande): incollalo in chat con le slide`);
 }
 function lessonView(sid, lid) {
   const s = DB.get(sid), l = s?.lessons.get(lid); if (!l) return notFound();
@@ -678,7 +723,12 @@ function lessonView(sid, lid) {
     ${tile('', '📝', 'Simulazione', null, '', `#/m/${enc(sid)}/esame`)}
   </div>`;
   h += `<h3>Nuovo quiz</h3>` + setupHtml(l.domande, null, 'quiz');
+  h += `<h3>Gestione</h3><button class="btn danger sm" id="del-lesson">🗑 Elimina tutta la lezione</button>`;
   view(l.nome, `#/m/${enc(sid)}`, h);
+  $('#del-lesson').onclick = () => {
+    if (!confirm(`Eliminare la lezione "${l.nome}" (${plural(l.domande.length, 'domanda', 'domande')})? Potrai ripristinarla da Impostazioni → Domande eliminate.`)) return;
+    hideQuestions(l.domande.map(q => q.id)); go(DB.get(sid) ? `#/m/${enc(sid)}` : '#/');
+  };
   const ret = `#/m/${enc(sid)}/l/${enc(lid)}`;
   bindSetup(() => l.domande, { sid, lid, title: l.nome, ret }, 'quiz');
   $('#t-due').onclick = () => startQuiz({ sid, lid, pool: l.domande.filter(isDue), order: 'random', title: 'Ripasso · ' + l.nome, ret, mode: 'ripasso' });
@@ -999,7 +1049,7 @@ function quitQuiz() {
 }
 function qheadHtml(it, label) {
   const q = it.q, les = lessonOf(q);
-  return `<div class="qhead"><span>${label}</span>${QUIZ.mode !== 'esame' && QUIZ.combo >= 2 ? `<span class="combo">🔥 ×${QUIZ.combo}</span>` : ''}<span class="qtools">${starBtn(q)}${flagBtn(q)}</span></div>
+  return `<div class="qhead"><span>${label}</span>${QUIZ.mode !== 'esame' && QUIZ.combo >= 2 ? `<span class="combo">🔥 ×${QUIZ.combo}</span>` : ''}<span class="qtools">${starBtn(q)}${flagBtn(q)}${QUIZ.mode !== 'esame' ? delBtn(q) : ''}</span></div>
     ${QUIZ.multi && les ? `<div class="qles">${esc(subjName(q.sid))} › ${esc(les.nome)}</div>` : ''}`;
 }
 function bindLive(it, submit, exam) {
@@ -1189,6 +1239,7 @@ function examResults() {
 /* =========================================================
    Sfoglia (lezione, preferiti, segnalate)
    ========================================================= */
+let BSEL = null;
 function browseView(sid, { lid, kind }) {
   const s = DB.get(sid); if (!s) return notFound();
   let qs, title, back = `#/m/${enc(sid)}`;
@@ -1196,18 +1247,32 @@ function browseView(sid, { lid, kind }) {
   else if (kind === 'preferiti') { qs = allQ(s).filter(q => isStar(q.id)); title = 'Preferiti · ' + s.nome; }
   else if (kind === 'segnalate') { qs = allQ(s).filter(q => isFlag(q.id)); title = 'Segnalate · ' + s.nome; }
   else { qs = allQ(s); title = 'Tutte · ' + s.nome; }
+  const sel = BSEL && BSEL.key === location.hash ? BSEL.set : null;
   let h = '';
   if (!qs.length) h = `<div class="empty">${kind === 'preferiti' ? 'Nessuna preferita. Tocca ★ durante un quiz per salvarne una.' : kind === 'segnalate' ? 'Nessuna domanda segnalata. Tocca ⚑ durante un quiz se una domanda è sbagliata o ambigua.' : 'Nessuna domanda.'}</div>`;
   else {
-    h += `<div class="row" style="margin-bottom:12px"><button class="btn primary" id="b-quiz">Fai un quiz su queste ${qs.length}</button>${kind === 'segnalate' ? '<button class="btn" id="b-copy">Copia per Claude</button>' : ''}</div>`;
+    h += sel
+      ? `<div class="row selbar"><span class="grow"><b>${sel.size}</b> selezionate</span><button class="btn sm" id="b-all">${sel.size === qs.length ? 'Nessuna' : 'Tutte'}</button></div>`
+      : `<div class="row" style="margin-bottom:12px"><button class="btn primary" id="b-quiz">Fai un quiz su queste ${qs.length}</button>${kind === 'segnalate' ? '<button class="btn" id="b-copy">Copia per Claude</button>' : ''}<button class="btn" id="b-sel">Seleziona</button></div>`;
     if (kind === 'segnalate') h += `<p class="hint" style="margin:-4px 2px 12px">"Copia per Claude" prepara un messaggio con le domande e le tue note: incollalo in chat per ricevere il JSON corretto da reimportare.</p>`;
     h += `<div class="stack">` + qs.map(q => {
       const f = flagOf(q.id), st = STATS.q[q.id];
-      return `<div class="card qcard"><div class="qhead"><span>${TYPES[q.tipo]}${!lid ? ` · ${esc(lessonOf(q)?.nome || '')}` : ''}${st ? ` · ${st.ok}/${st.n}` : ''}</span><span class="qtools">${starBtn(q)}${flagBtn(q)}</span></div>
+      return `<div class="card qcard ${sel ? 'selmode' : ''} ${sel?.has(q.id) ? 'picked' : ''}" data-pick="${esc(q.id)}"><div class="qhead">${sel ? `<span class="check">${sel.has(q.id) ? '✓' : ''}</span>` : ''}<span>${TYPES[q.tipo]}${!lid ? ` · ${esc(lessonOf(q)?.nome || '')}` : ''}${st ? ` · ${st.ok}/${st.n}` : ''}</span>${sel ? '' : `<span class="qtools">${starBtn(q)}${flagBtn(q)}${delBtn(q)}</span>`}</div>
         ${revealHtml(q)}${q.spiegazione ? `<div class="expl-b">${fmt(q.spiegazione)}</div>` : ''}${f.flag && f.note ? `<div class="note">⚑ ${esc(f.note)}</div>` : ''}</div>`;
     }).join('') + '</div>';
   }
-  view(title, back, h);
+  if (sel) h += `<div class="actbar"><div class="inner"><button class="btn" id="b-cancel">Annulla</button><button class="btn danger-fill" id="b-del" ${sel.size ? '' : 'disabled'}>Elimina ${sel.size || ''}</button></div></div>`;
+  view(title, back, h, sel ? { tab: false, keepScroll: true } : {});
+  const again = () => browseView(sid, { lid, kind });
+  $('#b-sel')?.addEventListener('click', () => { BSEL = { key: location.hash, set: new Set() }; again(); });
+  $('#b-cancel')?.addEventListener('click', () => { BSEL = null; again(); });
+  $('#b-all')?.addEventListener('click', () => { BSEL.set = sel.size === qs.length ? new Set() : new Set(qs.map(q => q.id)); again(); });
+  if (sel) $$('[data-pick]').forEach(c => c.addEventListener('click', () => { const id = c.dataset.pick; sel.has(id) ? sel.delete(id) : sel.add(id); again(); }));
+  $('#b-del')?.addEventListener('click', () => {
+    const ids = [...sel];
+    if (!confirm(`Eliminare ${plural(ids.length, 'domanda', 'domande')}? Potrai ripristinarle da Impostazioni → Domande eliminate.`)) return;
+    BSEL = null; hideQuestions(ids); route();
+  });
   $('#b-quiz')?.addEventListener('click', () => startQuiz({ sid, lid, pool: qs, order: 'random', title, ret: location.hash }));
   $('#b-copy')?.addEventListener('click', () => copyText(flaggedText(sid), 'Copiato: incollalo nella chat con Claude'));
 }
@@ -1330,7 +1395,9 @@ function settingsView() {
       <p class="hint">Il token resta solo in questo browser. Se scade, riprendi da qui.</p>`;
   h += `</div><h3>Contenuti</h3><div class="list">
     <a class="card linkrow" href="#/importa"><span>＋ Importa quiz</span><span>›</span></a>
-    <a class="card linkrow" href="#/formato"><span>📄 Formato e prompt per Claude</span><span>›</span></a>
+    <a class="card linkrow" href="#/prompt"><span>🤖 Prompt per generare i quiz</span><span>›</span></a>
+    <a class="card linkrow" href="#/formato"><span>📄 Formato dei file</span><span>›</span></a>
+    <a class="card linkrow" href="#/eliminate"><span>🗑 Domande eliminate (${HIDDEN.length})</span><span>›</span></a>
     <button class="card linkrow" id="exp-flags"><span>⚑ Copia tutte le segnalate per Claude (${flaggedFor().length})</span><span>›</span></button>
     <a class="card linkrow" href="#/dati"><span>💾 Dati e backup</span><span>›</span></a></div>`;
   view('Impostazioni', null, h, { tab: 'impostazioni' });
@@ -1349,6 +1416,26 @@ function settingsView() {
   });
   $('#sync-now')?.addEventListener('click', async () => { await syncNow(false); settingsView(); });
   $('#sync-off')?.addEventListener('click', () => { if (!confirm('Scollegare la sincronizzazione su questo dispositivo? I dati restano sia qui sia sul Gist.')) return; SYNC = {}; saveSync(); settingsView(); });
+}
+
+function hiddenView() {
+  const groups = new Map();
+  HIDDEN.forEach(q => { const k = q.sid + '/' + q.lid; (groups.get(k) || groups.set(k, []).get(k)).push(q); });
+  let h = '';
+  if (!HIDDEN.length) h = `<div class="empty">Nessuna domanda eliminata.<br><small>Puoi eliminare una domanda con 🗑 durante un quiz o da "Sfoglia domande".</small></div>`;
+  else {
+    h += `<div class="row" style="margin-bottom:12px"><button class="btn" id="r-all">Ripristina tutte (${HIDDEN.length})</button></div><div class="stack">`;
+    for (const [k, qs] of groups) {
+      const n = NAMES.get(k) || { s: qs[0].sid, l: qs[0].lid };
+      h += `<div class="card"><div class="sp-h"><b>${esc(n.s)} › ${esc(n.l)}</b><button class="btn sm" data-rg="${esc(k)}">Ripristina ${qs.length}</button></div>` +
+        qs.map(q => `<div class="wrong-item lrow"><span class="grow">${fmt(cut(qLabel(q), 140))}<small>${TYPES[q.tipo]}</small></span><button class="btn sm" data-rq="${esc(q.id)}">↩︎</button></div>`).join('') + '</div>';
+    }
+    h += '</div>';
+  }
+  view('Domande eliminate', '#/impostazioni', h, { tab: 'impostazioni' });
+  $('#r-all')?.addEventListener('click', () => restoreQuestions(HIDDEN.map(q => q.id)));
+  $$('[data-rg]').forEach(b => b.onclick = () => restoreQuestions(HIDDEN.filter(q => q.sid + '/' + q.lid === b.dataset.rg).map(q => q.id)));
+  $$('[data-rq]').forEach(b => b.onclick = () => restoreQuestions([b.dataset.rq]));
 }
 
 /* ---------- sync via GitHub Gist ---------- */
@@ -1373,11 +1460,13 @@ function mergeSnap(a, b) {
   const MA = a.meta, MB = b.meta || {};
   const subj = { ...(MB.subj || {}) }; for (const [k, v] of Object.entries(MA.subj)) if (!subj[k] || (v.t || 0) >= (subj[k].t || 0)) subj[k] = v;
   const flags = { ...(MB.flags || {}) }; for (const [k, v] of Object.entries(MA.flags)) if (!flags[k] || (v.t || 0) >= (flags[k].t || 0)) flags[k] = v;
+  const hidden = { ...(MB.hidden || {}) }; for (const [k, v] of Object.entries(MA.hidden || {})) if (!hidden[k] || (v.t || 0) >= (hidden[k].t || 0)) hidden[k] = v;
+  const prompt = (MB.prompt?.t || 0) > (MA.prompt?.t || 0) ? MB.prompt : MA.prompt;
   const goalNewer = (MB.goalT || 0) > (MA.goalT || 0);
   return {
     app: 'ripasso', v: 2, local, tomb,
     stats: { q, sessions: [...ses.values()].sort((x, y) => x.t - y.t).slice(-1500), dev, ach },
-    meta: { subj, flags, goal: goalNewer ? MB.goal : MA.goal, goalT: Math.max(MA.goalT || 0, MB.goalT || 0) }
+    meta: { subj, flags, hidden, prompt, goal: goalNewer ? MB.goal : MA.goal, goalT: Math.max(MA.goalT || 0, MB.goalT || 0) }
   };
 }
 function applySnap(s) {
@@ -1496,14 +1585,18 @@ function importView() {
       const p = parsePayload(j); lessons.push(...p.lessons); p.errors.forEach(x => errors.push(`${name}: ${x}`));
     });
     const good = lessons.filter(l => l.domande.length);
+    const MAXQ = META.prompt.max, over = good.filter(l => l.domande.length > MAXQ);
     let r = '';
     if (good.length) r += `<div class="card rep"><b class="rep-ok">✓ Pronte da salvare</b><ul>${good.map(l => `<li><b>${esc(l.materia)}</b> › ${esc(l.lezione)}: ${plural(l.domande.length, 'domanda', 'domande')} (${Object.entries(l.domande.reduce((a, q) => (a[q.tipo] = (a[q.tipo] || 0) + 1, a), {})).map(([t, n]) => `${n} ${TYPES[t].toLowerCase()}`).join(', ')})</li>`).join('')}</ul></div>`;
     if (errors.length) r += `<div class="card rep" style="margin-top:10px"><b class="rep-ko">✗ Problemi (${errors.length})</b><ul>${errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>${good.length ? '<p class="hint">Le domande con problemi verranno saltate.</p>' : ''}</div>`;
     if (!good.length && !errors.length) r = '<p class="hint">Niente da importare.</p>';
+    if (over.length) r += `<div class="warn" style="margin-top:10px">⚠️ ${over.map(l => `<b>${esc(l.lezione)}</b> ha ${l.domande.length} domande`).join(', ')}: più del massimo impostato (${MAXQ}).
+      <label class="switch" style="margin-top:8px;font-weight:600"><span>Importa solo le prime ${MAXQ}</span><input type="checkbox" id="imp-cut" checked></label></div>`;
     if (good.length) r += `<button class="btn primary big" id="imp-save" style="margin-top:12px">Salva ${plural(good.length, 'lezione', 'lezioni')}</button>`;
     $('#imp-report').innerHTML = r;
     $('#imp-save')?.addEventListener('click', () => {
       const mode = $('#imp-mode .on').dataset.v;
+      if ($('#imp-cut')?.checked) over.forEach(l => l.domande = l.domande.slice(0, MAXQ));
       good.forEach(l => {
         const key = lkey(l), ex = LOCAL.find(x => lkey(x) === key);
         if (ex && mode === 'add') { const ids = new Set(ex.domande.map(q => q.id)); l.domande.forEach(q => { if (!ids.has(q.id)) ex.domande.push(q); }); ex.t = Date.now(); }
@@ -1553,37 +1646,102 @@ const EXAMPLE = `{
       "punti": ["BA ha forma d×k", "merge W' = W + BA"] }
   ]
 }`;
-const PROMPT = `Crea un quiz per la mia app "Ripasso" a partire da questa lezione (te la incollo/allego sotto).
+const TYPE_SPECS = {
+  multipla: `Risposta multipla: {"tipo":"multipla","domanda":"...","opzioni":["...","...","...","..."],"corretta":"B","spiegazione":"..."}
+   - "corretta" è una lettera ("A","B",...) oppure una lista di lettere se le risposte giuste sono più di una, es. ["A","C"].
+   - Distrattori plausibili e di lunghezza simile alla risposta giusta.`,
+  vero_falso: `Vero/Falso: {"tipo":"vero_falso","affermazione":"...","risposta":true,"spiegazione":"..."}`,
+  completamento: `Completamento: {"tipo":"completamento","testo":"... [[risposta]] ... [[altra risposta|sinonimo accettato]] ...","spiegazione":"..."}
+   - Ogni spazio è [[risposta]]; varianti accettate separate da |. Risposte brevi (1-3 parole).
+   - Opzionale "distrattori": ["...","..."] per trasformare gli spazi in menu a tendina.`,
+  errore: `Trova l'errore: {"tipo":"errore","testo":"frase con UN errore marcato come {{parola sbagliata|parola corretta}}","spiegazione":"..."}
+   - Esattamente un {{...|...}} per domanda; la parte sbagliata breve (idealmente una parola) e plausibile.
+   - Per il codice: metti il codice in "testo" con gli a capo (\\n); la riga con {{...|...}} è quella da trovare; aggiungi "domanda" con la consegna.`,
+  abbinamento: `Abbinamento: {"tipo":"abbinamento","domanda":"Collega ...","coppie":[["termine","descrizione"], ...],"spiegazione":"..."}
+   - 3-6 coppie, termini brevi, descrizioni non banalmente riconoscibili.`,
+  ordina: `Ordina: {"tipo":"ordina","domanda":"Ordina ...","passi":["primo","secondo","terzo", ...],"spiegazione":"..."}
+   - "passi" va scritto GIÀ nell'ordine corretto (l'app li mescola). 3-6 passi: pipeline, algoritmi, derivazioni.`,
+  aperta: `Risposta aperta: {"tipo":"aperta","domanda":"...","risposta":"risposta modello completa ma concisa","punti":["concetto chiave 1","concetto chiave 2"]}
+   - Per domande da orale/scritto; mi autovaluto confrontandomi con la risposta modello.`
+};
+const DEFAULT_TPL = `Crea un quiz per la mia app "Ripasso" a partire da questa lezione (te la incollo/allego sotto).
 
 Restituisci SOLO un blocco JSON valido con questa struttura:
-{"materia": "<nome materia, sempre uguale per tutte le lezioni>", "lezione": "<NN - titolo lezione>", "domande": [ ... ]}
+{"materia": "{MATERIA}", "lezione": "<NN - titolo lezione>", "domande": [ ... ]}
 
-Tipi di domanda (mescolali; circa 20-30 domande in totale, con prevalenza di multipla, completamento e trova l'errore):
-1. Risposta multipla: {"tipo":"multipla","domanda":"...","opzioni":["...","...","...","..."],"corretta":"B","spiegazione":"..."}
-   - "corretta" è una lettera ("A","B",...) oppure una lista di lettere se le risposte giuste sono più di una, es. ["A","C"].
-   - Distrattori plausibili e di lunghezza simile alla risposta giusta.
-2. Vero/Falso: {"tipo":"vero_falso","affermazione":"...","risposta":true,"spiegazione":"..."}
-3. Completamento: {"tipo":"completamento","testo":"... [[risposta]] ... [[altra risposta|sinonimo accettato]] ...","spiegazione":"..."}
-   - Ogni spazio è [[risposta]]; varianti accettate separate da |. Risposte brevi (1-3 parole).
-   - Opzionale "distrattori": ["...","..."] per trasformare gli spazi in menu a tendina.
-4. Trova l'errore: {"tipo":"errore","testo":"frase con UN errore marcato come {{parola sbagliata|parola corretta}}","spiegazione":"..."}
-   - Esattamente un {{...|...}} per domanda; la parte sbagliata breve (idealmente una parola) e plausibile.
-   - Per il codice: metti il codice in "testo" con gli a capo (\\n); la riga con {{...|...}} è quella da trovare; aggiungi "domanda" con la consegna.
-5. Abbinamento: {"tipo":"abbinamento","domanda":"Collega ...","coppie":[["termine","descrizione"], ...],"spiegazione":"..."}
-   - 3-6 coppie, termini brevi, descrizioni non banalmente riconoscibili.
-6. Ordina: {"tipo":"ordina","domanda":"Ordina ...","passi":["primo","secondo","terzo", ...],"spiegazione":"..."}
-   - "passi" va scritto GIÀ nell'ordine corretto (l'app li mescola). 3-6 passi: pipeline, algoritmi, derivazioni.
-7. Risposta aperta: {"tipo":"aperta","domanda":"...","risposta":"risposta modello completa ma concisa","punti":["concetto chiave 1","concetto chiave 2"]}
-   - Per domande da orale/scritto; mi autovaluto confrontandomi con la risposta modello.
+NUMERO DI DOMANDE: tra {MIN} e {MAX} in totale. Non superare MAI {MAX} domande: se la lezione è lunga, scegli i concetti più importanti per l'esame invece di aggiungere domande.
+
+Tipi di domanda ammessi (usa SOLO questi e mescolali):
+{TIPI}
 
 Campi opzionali per ogni domanda: "codice" (snippet mostrato sopra la domanda), "spiegazione" (consigliata sempre).
 Formule in LaTeX tra $...$ (nel JSON i backslash vanno raddoppiati: "$\\\\alpha$").
-Copri tutti i concetti importanti della lezione: definizioni, formule, confronti, casi tipici d'esame. Scrivi in italiano.`;
+Copri i concetti importanti della lezione: definizioni, formule, confronti, casi tipici d'esame. Scrivi in italiano.
+{EXTRA}`;
+function buildPrompt(materia) {
+  const P = META.prompt;
+  const types = Object.keys(TYPES).filter(t => P.types.includes(t));
+  const tipi = types.map((t, i) => `${i + 1}. ${TYPE_SPECS[t]}`).join('\n');
+  return (P.tpl || DEFAULT_TPL)
+    .replaceAll('{MATERIA}', materia || '<nome materia, sempre uguale per tutte le lezioni>')
+    .replaceAll('{MIN}', P.min).replaceAll('{MAX}', P.max)
+    .replaceAll('{TIPI}', tipi)
+    .replaceAll('{EXTRA}', P.extra ? '\nIstruzioni aggiuntive:\n' + P.extra : '')
+    .trim();
+}
+function savePrompt() { META.prompt.t = Date.now(); saveMeta(); scheduleSync(); }
+function promptView() {
+  const P = META.prompt, subs = [...DB.values()].sort((a, b) => a.nome.localeCompare(b.nome, 'it'));
+  const cur = PROMPT_SUBJ && DB.get(PROMPT_SUBJ) ? PROMPT_SUBJ : '';
+  const h = `<p class="meta" style="margin:0 2px 14px">Il prompt da incollare in chat (Claude, ChatGPT…) insieme alle slide per generare le domande. Le modifiche si salvano da sole e vengono sincronizzate.</p>
+    <div class="field"><label>Numero di domande per lezione</label><div class="minmax">
+      <label>da <input type="number" id="p-min" min="1" max="200" value="${P.min}" inputmode="numeric"></label>
+      <label>a <input type="number" id="p-max" min="1" max="200" value="${P.max}" inputmode="numeric"></label></div>
+      <p class="hint">Il massimo è un limite rigido: l'LLM non deve superarlo. All'importazione ti avviso se lo supera.</p></div>
+    <div class="field"><label>Tipi di domanda da chiedere</label><div class="chips" id="p-types">${Object.keys(TYPES).map(t => `<button class="chip ${P.types.includes(t) ? 'on' : ''}" data-v="${t}">${TYPES[t]}</button>`).join('')}</div></div>
+    <div class="field"><label>Istruzioni aggiuntive <small class="meta" style="display:inline">(facoltative)</small></label>
+      <textarea id="p-extra" class="plain" placeholder="Es. concentrati sulle formule; niente domande sulla storia; difficoltà da esame scritto…">${esc(P.extra)}</textarea></div>
+    <div class="field"><label>Materia</label><select id="p-subj" class="plain-sel"><option value="">Generica (la scrive l'LLM)</option>${subs.map(x => `<option value="${esc(x.id)}" ${x.id === cur ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}</select>
+      <p class="hint">Scegliendo la materia, il nome finisce già nel prompt: le nuove lezioni vengono aggiunte alla materia giusta.</p></div>
+    <button class="btn primary big" id="p-copy">Copia il prompt</button>
+    <h3>Anteprima</h3><pre class="pv" id="p-prev"></pre>
+    <h3>Testo completo ${P.tpl ? '<span class="badge" style="text-transform:none;letter-spacing:0">personalizzato</span>' : ''}</h3>
+    <details class="card adv" ${P.tpl ? 'open' : ''}><summary>Modifica il modello del prompt</summary>
+      <p class="hint">Segnaposto disponibili: <code>{MATERIA}</code> <code>{MIN}</code> <code>{MAX}</code> <code>{TIPI}</code> <code>{EXTRA}</code>. Vengono sostituiti con le impostazioni sopra.</p>
+      <textarea id="p-tpl" style="min-height:300px">${esc(P.tpl || DEFAULT_TPL)}</textarea>
+      <div class="row" style="margin-top:10px"><button class="btn" id="p-reset">Ripristina originale</button><button class="btn primary" id="p-save">Salva modello</button></div></details>`;
+  view('Prompt per i quiz', '#/impostazioni', h, { tab: 'impostazioni' });
+  const prev = () => { $('#p-prev').textContent = buildPrompt(subjName($('#p-subj').value) && $('#p-subj').value ? subjName($('#p-subj').value) : ''); };
+  prev();
+  const num = (el, key) => el.addEventListener('change', () => {
+    let v = Math.round(+el.value); if (!(v >= 1)) v = 1; if (v > 200) v = 200;
+    P[key] = v;
+    if (P.min > P.max) { if (key === 'min') P.max = P.min; else P.min = P.max; }
+    $('#p-min').value = P.min; $('#p-max').value = P.max; savePrompt(); prev();
+  });
+  num($('#p-min'), 'min'); num($('#p-max'), 'max');
+  $('#p-types').addEventListener('click', e => {
+    const b = e.target.closest('.chip'); if (!b) return;
+    const on = $$('#p-types .chip.on');
+    if (b.classList.contains('on') && on.length === 1) return toast('Serve almeno un tipo');
+    b.classList.toggle('on'); P.types = $$('#p-types .chip.on').map(x => x.dataset.v); savePrompt(); prev();
+  });
+  $('#p-extra').addEventListener('input', e => { P.extra = e.target.value.trim(); clearTimeout(promptView._t); promptView._t = setTimeout(savePrompt, 600); prev(); });
+  $('#p-subj').onchange = e => { PROMPT_SUBJ = e.target.value; prev(); };
+  $('#p-copy').onclick = () => copyText($('#p-prev').textContent, 'Prompt copiato: incollalo in chat con le slide');
+  $('#p-save').onclick = () => {
+    const t = $('#p-tpl').value.trim();
+    if (!t.includes('{TIPI}')) toast('Attenzione: senza {TIPI} l\'LLM non saprà il formato delle domande', 3500);
+    P.tpl = t === DEFAULT_TPL.trim() ? '' : t; savePrompt(); promptView(); toast('Modello salvato');
+  };
+  $('#p-reset').onclick = () => { if (!confirm('Tornare al modello originale?')) return; P.tpl = ''; savePrompt(); promptView(); };
+}
+let PROMPT_SUBJ = '';
 function formatView() {
   const h = `<div class="doc">
   <p>Ogni lezione è un file JSON con <b>materia</b>, <b>lezione</b> e una lista di <b>domande</b>. Materie e lezioni vengono create in automatico dai nomi: usa sempre lo stesso nome di materia.</p>
-  <button class="btn primary" id="copy-prompt" style="width:100%">Copia il prompt per generarli con Claude</button>
-  <p class="hint">Incolla il prompt in chat insieme alle slide o agli appunti, poi incolla il JSON che ottieni in <a href="#/importa">Importa</a>.</p>
+  <a class="btn primary" href="#/prompt" style="width:100%">🤖 Prompt per generarli con un LLM</a>
+  <p class="hint">Lì scegli quante domande e di che tipo; poi incolli il JSON che ottieni in <a href="#/importa">Importa</a>.</p>
   <h3>Tipi di domanda</h3>
   <p><b>multipla</b>: <code>domanda</code>, <code>opzioni</code>, <code>corretta</code> (lettera, o lista se più risposte sono giuste). Le opzioni vengono mescolate; <code>"mescola": false</code> le tiene in ordine.</p>
   <p><b>vero_falso</b>: <code>affermazione</code>, <code>risposta</code> (true/false).</p>
@@ -1598,7 +1756,6 @@ function formatView() {
   <h3>Nel repo GitHub</h3><p>Metti i file in <code>data/</code> e aggiungi il percorso a <code>data/index.json</code>:</p><pre><code>${esc('{ "file": ["hlt/18-lora.json", "cv/01-intro.json"] }')}</code></pre>
   </div>`;
   view('Formato dei quiz', '#/impostazioni', h, { tab: 'impostazioni' });
-  $('#copy-prompt').onclick = () => copyText(PROMPT, 'Prompt copiato');
 }
 
 /* =========================================================

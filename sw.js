@@ -1,5 +1,5 @@
 // Service worker: app usabile offline. Rete prima (così vedi subito gli aggiornamenti), cache come riserva.
-const CACHE = 'ripasso-v2';
+const CACHE = 'ripasso-v3';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.json', 'icons/icon-192.png', 'icons/icon-512.png', 'data/index.json',
   'vendor/katex/katex.min.css', 'vendor/katex/katex.min.js', 'vendor/katex/contrib/auto-render.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });

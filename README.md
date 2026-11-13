@@ -132,6 +132,26 @@ Si può scrivere la propria risposta (facoltativo), poi si confronta con quella 
 
 Nei testi funzionano `$formule$`, `**grassetto**` e `` `codice` ``. Nel JSON i backslash del LaTeX vanno raddoppiati: `"$\\alpha$"`.
 
+## Eliminare domande
+
+- **Una domanda:** tocca 🗑 durante un quiz o in *Sfoglia domande*. Compare **Annulla** per qualche secondo.
+- **Più domande insieme:** in *Sfoglia domande* (oppure in Preferiti o Segnalate) premi **Seleziona**, scegli le domande e premi **Elimina**.
+- **Una lezione intera:** in fondo alla pagina della lezione c'è **Elimina tutta la lezione**.
+
+Funziona anche con le domande che stanno nel repo: non vengono cancellate dai file, ma restano nascoste su tutti i dispositivi sincronizzati. Le ritrovi e le ripristini in **Impostazioni → Domande eliminate**.
+
+## Prompt per generare i quiz
+
+In **Impostazioni → Prompt per generare i quiz** puoi impostare:
+- il **numero minimo e massimo di domande**: il massimo è un limite rigido scritto nel prompt;
+- i **tipi di domanda** da chiedere;
+- delle **istruzioni aggiuntive**;
+- la **materia**, così il nome finisce già nel prompt.
+
+L'anteprima si aggiorna mentre modifichi. Puoi anche riscrivere tutto il modello del prompt usando i segnaposto `{MATERIA}`, `{MIN}`, `{MAX}`, `{TIPI}` ed `{EXTRA}`.
+Se importi una lezione con più domande del massimo, l'app ti avvisa e ti propone di tenere solo le prime N.
+Dalla pagina di una materia, **"Copia il prompt per una nuova lezione"** copia direttamente il prompt con il nome della materia già inserito.
+
 ## Sincronizzazione tra dispositivi
 
 In **Impostazioni → Sincronizzazione**:
